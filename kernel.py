@@ -20,9 +20,9 @@ address_path = '../../数据/AD_NewDiskAddress.csv'
 # 挂牌数据路径
 data_path = '/Users/wangdexun/Documents/gubbins/房价大数据/数据/挂牌数据/'
 # 测试数据路径
-test_path = '../../数据/评估师数据/5月份.xlsx'
+test_path = '../../数据/评估师数据/5月.xlsx'
 # 结果保存路径
-result_path = './5月份.csv'
+result_path = './5月.csv'
 # 训练集起始月份
 beginDate = '2017-05'
 # 训练集终止月份
@@ -293,7 +293,7 @@ def make_train_test_set(all_df, test_df=None, meta_df=None):
     y_train = all_df.unit_price
     # 计算小区房价中位数
     med_price = pd.concat((x_train.NewDiskID, y_train), axis=1)
-    med_price = med_price.groupby('NewDiskID', as_index=False)['unit_price'].agg({'median': 'median'})
+    med_price = med_price.groupby('NewDiskID', as_index=False)['unit_price'].agg({'median': 'mean'})
     x_train = pd.merge(x_train, med_price, on='NewDiskID', how='left')
     # 计算经纬度geohash信息
     #     geo=[]
@@ -301,7 +301,7 @@ def make_train_test_set(all_df, test_df=None, meta_df=None):
     #         geo.append(encode(i[0],i[1],6))
     #     x_train['geo']=[i[:-1] for i in geo]
     # 测试集
-    x_test = test_df.drop(['address', 'name', 'house_type'], axis=1)
+    x_test = test_df[['index', 'time', 'all_floor', 'floor', 'acreage', 'NewDiskID', 'unit_price']]
     x_test = pd.merge(x_test, meta_df.drop(['PropertyID'], axis=1), on='NewDiskID', how='inner')
     x_test = pd.merge(x_test, med_price, on='NewDiskID', how='left')
     x_test['floor_section'] = floor_map(x_test.floor)
@@ -331,34 +331,14 @@ def make_train_test_set(all_df, test_df=None, meta_df=None):
 
     x_train.drop('NewDiskID', inplace=True, axis=1)
     x_test.drop('NewDiskID', inplace=True, axis=1)
-    # y_test=x_test.unit_price
-    # x_test.drop('unit_price',axis=1,inplace=True)
-    return x_train, y_train, x_test, None
+    y_test = x_test.unit_price
+    x_test.drop('unit_price', axis=1, inplace=True)
+    return x_train, y_train, x_test, y_test
 
 
-if __name__ == '__main__':
-    '''加载数据'''
-    meta_df, all_df = load_data()
-    '''处理训练集'''
-    all_df = preprocess(all_df)
-    '''加载训练测试数据'''
-    test_df = pd.read_excel(test_path)
-    test_df.reset_index(inplace=True)
-    print('测试数据量:%d' % test_df.shape[0])
-    test_df.rename(columns={'楼盘名称': 'name',
-                            '房屋类型': 'house_type',
-                            '竣工年份': 'time',
-                            '总楼层数': 'all_floor',
-                            '所属层': 'floor',
-                            '建筑面积(m2)': 'acreage',
-                            '楼盘编号': 'NewDiskID',
-                            '项目名称': 'address'}, inplace=True)
-    x_train, y_train, x_test, y_test = make_train_test_set(all_df, test_df, meta_df)
-    '''分割训练/验证集'''
-    # x1, x2, y1, y2 = train_test_split(x_train, y_train, train_size=0.9, random_state=0)
-    '''模型训练'''
+def train_model(x_train, y_train):
     # * LightGBM
-    cache_path = './cache/model_%s-%s.txt' % (beginDate, endDate)
+    cache_path = './cache/model_%s-%s_%s.txt' % (beginDate, endDate, x_train.shape[1])
     if os.path.exists(cache_path):
         gbm = lgb.Booster(model_file=cache_path)
     else:
@@ -381,20 +361,76 @@ if __name__ == '__main__':
         }
 
         lgb_train = lgb.Dataset(x_train, y_train, categorical_feature=['area', 'Plate', 'Module', 'floor_section'])
-        gbm = lgb.train(params, lgb_train, num_boost_round=800)
+        gbm = lgb.train(params, lgb_train, num_boost_round=750)
         gbm.save_model(cache_path)
+    return gbm
+
+
+if __name__ == '__main__':
+    '''加载数据'''
+    meta_df, all_df = load_data()
+    '''处理训练集'''
+    all_df = preprocess(all_df)
+    '''加载训练测试数据'''
+    test_df = pd.read_excel(test_path)
+    test_df.reset_index(inplace=True)
+    print('测试数据量:%d' % test_df.shape[0])
+    test_df.rename(columns={'楼盘名称': 'name',
+                            '房屋类型': 'house_type',
+                            '竣工年份': 'time',
+                            '总楼层数': 'all_floor',
+                            '所属层': 'floor',
+                            '建筑面积(m2)': 'acreage',
+                            '楼盘编号': 'NewDiskID',
+                            '项目名称': 'address',
+                            '正常价格(元)': 'unit_price',
+                            '总价': 'total_price'}, inplace=True)
+    x_train, y_train, x_test, y_test = make_train_test_set(all_df, test_df, meta_df)
+    '''分割训练/验证集'''
+    # x1, x2, y1, y2 = train_test_split(x_train, y_train, train_size=0.9, random_state=0)
+    '''模型训练'''
+    gbm = train_model(x_train, y_train)
     print('开始测试')
 
     '''基价测试'''
     # preds = gbm.predict(x_test[x_train.columns])
-    # result = pd.DataFrame({'NewDiskID': x_test.NewDiskID, '楼盘': x_test.name, '单价': preds, 'Mark': x_test.mid.notnull() * 1})
+    # result = pd.DataFrame({'NewDiskID': x_test.NewDiskID,
+    #                        '楼盘': x_test.name,
+    #                        '单价': preds,
+    #                        'Mark': x_test.mid.notnull() * 1})
     # result = result[['NewDiskID', '楼盘', '单价', 'Mark']]
     # result.to_csv('price.csv', index=False)
 
     '''单套测试'''
-    y_pred = gbm.predict(x_test[x_train.columns])
-    prices = pd.DataFrame({'index': x_test['index'], 'price': y_pred})
-    ans_df = prices.groupby('index', as_index=False)['price'].median()
-    ans_df = pd.merge(test_df, ans_df, on='index', how='left')
-    ans_df.drop('index', axis=1, inplace=True)
+    y_pred_1 = gbm.predict(x_test[x_train.columns])
+    x_train.drop('median', axis=1, inplace=True)
+    gbm = train_model(x_train, y_train)
+    y_pred_2 = gbm.predict(x_test[x_train.columns])
+
+    prices = pd.DataFrame({'index': x_test['index'], 'price1': y_pred_1, 'price2': y_pred_2})
+    ans_df = prices.groupby('index', as_index=False)[['price1', 'price2']].median()
+    ans_df = pd.merge(test_df[['index', 'NewDiskID']], ans_df, on='index', how='left').drop('index', axis=1)
+
+    price = []
+    train_ids = all_df.NewDiskID.unique()
+    meta_ids = meta_df.NewDiskID.unique()
+    for row in ans_df.values:
+        if row[0] in train_ids:
+            price.append(row[1])
+        elif row[0] in meta_ids:
+            price.append(row[2])
+        else:
+            price.append(np.nan)
+
+    ans_df = test_df.drop('index', axis=1)
+    ans_df['price'] = price
     ans_df.to_csv(result_path, index=False)
+
+    # 评估
+    gap_ratio = np.abs(ans_df.price - ans_df.unit_price) / ans_df.unit_price * 100
+    gap_ratio.dropna(inplace=True)
+    print('覆盖率：', gap_ratio.shape[0] / test_df.shape[0])
+    counts = []
+    for i in range(10, 21):
+        counts.append(['%d%%' % i, (gap_ratio <= i).sum() / gap_ratio.shape[0]])
+    print(pd.DataFrame(counts, columns=['误差', '百分比']))
