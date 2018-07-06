@@ -22,11 +22,11 @@ data_path = '/Users/wangdexun/Documents/gubbins/房价大数据/数据/挂牌数
 # 测试数据路径
 test_path = '../../数据/评估师数据/2017全年.xlsx'
 # 结果保存路径
-result_path = './result/17年9月.csv'
+result_path = './result/17年11月.csv'
 # 训练集起始月份
-beginDate = '2016-10'
+beginDate = '2016-12'
 # 训练集终止月份
-endDate = '2017-09'
+endDate = '2017-11'
 
 
 def load_guapai(name, month):
@@ -309,6 +309,7 @@ def make_train_test_set(all_df, test_df=None, meta_df=None):
     x_test = pd.merge(x_test, meta_df.drop(['PropertyID'], axis=1), on='NewDiskID', how='inner')
     x_test = pd.merge(x_test, med_price, on='NewDiskID', how='left')
     x_test['floor_section'] = floor_map(x_test.floor)
+    x_test.time = x_test.time.apply(lambda x: x.year if type(x) == datetime else x)
     x_test['time'] = x_test.time.apply(lambda x: min(2018 - x, 100) if 0 < x <= 2018 else None)
 
     # 将离散型变量转换成整型，用于lgb训练
@@ -381,7 +382,7 @@ if __name__ == '__main__':
     '''处理训练集'''
     all_df = preprocess(all_df)
     '''加载训练测试数据'''
-    test_df = pd.read_excel(test_path, sheetname='2017年9月')
+    test_df = pd.read_excel(test_path, sheetname='2017年11月')
     dump_cols = list(test_df.columns)
     test_df.reset_index(inplace=True)
     print('测试数据量:%d' % test_df.shape[0])
@@ -398,6 +399,7 @@ if __name__ == '__main__':
                             '总价': 'total_price'}, inplace=True)
     x_train, y_train, x_test, y_test = make_train_test_set(all_df, test_df, meta_df)
     '''分割训练/验证集'''
+    # todo:
     # x1, x2, y1, y2 = train_test_split(x_train, y_train, train_size=0.9, random_state=0)
     '''模型训练'''
     gbm = train_model(x_train, y_train)
